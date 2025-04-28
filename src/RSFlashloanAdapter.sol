@@ -42,6 +42,7 @@ contract RSFlashLoanAdapter is IFlashLoanSimpleReceiver {
     address public immutable owner;         // relayer EOA / hot key
     IPool   public immutable POOL;          // Aave pool on this chain
     IRS     public immutable SPOKE_POOL;    // Rhinestone SpokePool
+    IPoolAddressesProvider public immutable override ADDRESSES_PROVIDER;
 
     error NotOwner();
     error InvalidCaller();
@@ -56,10 +57,11 @@ contract RSFlashLoanAdapter is IFlashLoanSimpleReceiver {
         owner       = msg.sender;
         POOL        = IPool(provider.getPool());
         SPOKE_POOL  = spokePool;
+        ADDRESSES_PROVIDER = provider;
     }
 
     /* --------------------------------------------------------------------- */
-    /// @notice Entry point called from the TS relayer.
+    /// @notice Entry point called from the RS relayer (solver).
     /// @param  asset      token to borrow for settlement (segment tokenOut)
     /// @param  amount     quantity to borrow
     /// @param  rsCalldata ABI-encoded call to *either* SpokePool.fill variant
@@ -77,9 +79,9 @@ contract RSFlashLoanAdapter is IFlashLoanSimpleReceiver {
     /* --------------------------------------------------------------------- */
     /// @dev Aave callback. Executes intent fill then repays (+premium).
     function executeOperation(
-        address[] calldata assets,
-        uint256[] calldata amounts,
-        uint256[] calldata premiums,
+        address asset,
+        uint256 amount,
+        uint256 premium,
         address initiator,
         bytes calldata params
     )
@@ -89,11 +91,10 @@ contract RSFlashLoanAdapter is IFlashLoanSimpleReceiver {
     {
         if (msg.sender != address(POOL)) revert InvalidCaller();
         if (initiator != address(this)) revert InvalidInitiator();
-        if (assets.length != 1) revert InvalidAssetsLength();
 
         /* ------------------------------------------------------------------ */
         /* 1. Approve the SpokePool to pull the borrowed token for settlement */
-        IERC20(assets[0]).approve(address(SPOKE_POOL), type(uint256).max);
+        IERC20(asset).approve(address(SPOKE_POOL), type(uint256).max);
 
         /* 2. Perform the actual intent fill                                  */
         bytes memory rsCall = abi.decode(params, (bytes));
@@ -107,8 +108,8 @@ contract RSFlashLoanAdapter is IFlashLoanSimpleReceiver {
 
         /* ------------------------------------------------------------------ */
         /* 3. Repay Aave (amount + fee).  Fee is paid from relayer revenue.   */
-        uint256 repayment = amounts[0] + premiums[0];
-        IERC20(assets[0]).approve(address(POOL), repayment);
+        uint256 repayment = amount + premium;
+        IERC20(asset).approve(address(POOL), repayment);
 
         return true;    // signals success to Aave
     }
