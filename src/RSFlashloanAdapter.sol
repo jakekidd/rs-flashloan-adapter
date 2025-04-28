@@ -4,25 +4,22 @@ pragma solidity ^0.8.21;
 /*───────────────────────────────────────────────────────────────────────────*\
 │  AAVE V3 interfaces                                                        │
 \*───────────────────────────────────────────────────────────────────────────*/
-import {IFlashLoanSimpleReceiver} from
-    "@aave/core-v3/contracts/flashloan/interfaces/IFlashLoanSimpleReceiver.sol";
-import {IPoolAddressesProvider}  from
-    "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
-import {IPool}                   from
-    "@aave/core-v3/contracts/interfaces/IPool.sol";
+import {IFlashLoanSimpleReceiver} from "aave-v3-core/contracts/flashloan/interfaces/IFlashLoanSimpleReceiver.sol";
+import {IPoolAddressesProvider} from "aave-v3-core/contracts/interfaces/IPoolAddressesProvider.sol";
+import {IPool} from "aave-v3-core/contracts/interfaces/IPool.sol";
 
 interface IRS   {
     /* the two overloaded `fill` functions on the Rhinestone SpokePool     */
     function fill(
-        bytes   calldata payload,
-        address          exclusiveRelayer,
+        bytes calldata payload,
+        address exclusiveRelayer,
         address[] calldata repaymentAddresses,
         uint256[] calldata repaymentChainIds
     ) external;
 
     function fill(
-        bytes   calldata payload,
-        address          exclusiveRelayer,
+        bytes calldata payload,
+        address exclusiveRelayer,
         address[] calldata repaymentAddresses,
         uint256[] calldata repaymentChainIds,
         address account,
@@ -36,11 +33,11 @@ interface IERC20 {
 }
 
 /*───────────────────────────────────────────────────────────────────────────*\
-│   RSFlashloanAdapter                                                       │
+│   RSFlashLoanAdapter                                                       │
 │   - Owned by the relayer key.                                             │
 │   - Pulls temporary liquidity from Aave, executes an RS fill, repays.     │
 \*───────────────────────────────────────────────────────────────────────────*/
-contract RSFlashloanAdapter is IFlashLoanSimpleReceiver {
+contract RSFlashLoanAdapter is IFlashLoanSimpleReceiver {
     /* --------------------------------------------------------------------- */
     address public immutable owner;         // relayer EOA / hot key
     IPool   public immutable POOL;          // Aave pool on this chain
@@ -80,11 +77,11 @@ contract RSFlashloanAdapter is IFlashLoanSimpleReceiver {
     /* --------------------------------------------------------------------- */
     /// @dev Aave callback. Executes intent fill then repays (+premium).
     function executeOperation(
-        address asset,
-        uint256 amount,
-        uint256 premium,
+        address[] calldata assets,
+        uint256[] calldata amounts,
+        uint256[] calldata premiums,
         address initiator,
-        bytes   calldata params
+        bytes calldata params
     )
         external
         override
@@ -92,10 +89,11 @@ contract RSFlashloanAdapter is IFlashLoanSimpleReceiver {
     {
         if (msg.sender != address(POOL)) revert InvalidCaller();
         if (initiator != address(this)) revert InvalidInitiator();
+        if (assets.length != 1) revert InvalidAssetsLength();
 
         /* ------------------------------------------------------------------ */
         /* 1. Approve the SpokePool to pull the borrowed token for settlement */
-        IERC20(asset).approve(address(SPOKE_POOL), type(uint256).max);
+        IERC20(assets[0]).approve(address(SPOKE_POOL), type(uint256).max);
 
         /* 2. Perform the actual intent fill                                  */
         bytes memory rsCall = abi.decode(params, (bytes));
@@ -109,8 +107,8 @@ contract RSFlashloanAdapter is IFlashLoanSimpleReceiver {
 
         /* ------------------------------------------------------------------ */
         /* 3. Repay Aave (amount + fee).  Fee is paid from relayer revenue.   */
-        uint256 repayment = amount + premium;
-        IERC20(asset).approve(address(POOL), repayment);
+        uint256 repayment = amounts[0] + premiums[0];
+        IERC20(assets[0]).approve(address(POOL), repayment);
 
         return true;    // signals success to Aave
     }
